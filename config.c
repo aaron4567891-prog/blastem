@@ -319,7 +319,7 @@ static void update_pad_menu_binding(char *key, tern_val val, uint8_t valtype, vo
 	*pads = tern_insert_node(*pads, key, val.ptrval);
 }
 
-#define CONFIG_VERSION 13
+#define CONFIG_VERSION 14
 static tern_node *migrate_config(tern_node *config, int from_version)
 {
 	tern_node *def_config = parse_bundled_config("default.cfg");
@@ -580,6 +580,26 @@ static tern_node *migrate_config(tern_node *config, int from_version)
 		free(exts[0]);//All extensions in this list share an allocation, first one is a pointer to the buffer
 		free(exts);
 	}
+	case 13: {
+		// Add CHD to existing filters; an empty filter already shows all files.
+		uint32_t count;
+		char **exts = get_extension_list(config, &count);
+		uint8_t found = 0;
+		for (uint32_t i = 0; i < count; i++) {
+			if (!strcmp(exts[i], "chd") || !strcmp(exts[i], "CHD")) {
+				found = 1;
+			}
+		}
+		if (count && !found) {
+			const char *filter = tern_find_path_default(config, "ui\0extensions\0", (tern_val){.ptrval = "bin gen md smd sms gg zip gz cue iso vgm vgz flac wav chd"}, TVAL_PTR).ptrval;
+			const char *parts[] = {filter, " chd"};
+			config = tern_insert_path(config, "ui\0extensions\0", (tern_val){.ptrval = alloc_concat_m(2, parts)}, TVAL_PTR);
+		}
+		if (count) {
+			free(exts[0]);
+		}
+		free(exts);
+	}
 	}
 	char buffer[16];
 	sprintf(buffer, "%d", CONFIG_VERSION);
@@ -660,7 +680,7 @@ void delete_custom_config(void)
 
 char **get_extension_list(tern_node *config, uint32_t *num_exts_out)
 {
-	char *ext_filter = strdup(tern_find_path_default(config, "ui\0extensions\0", (tern_val){.ptrval = "bin gen md smd sms gg zip gz cue iso vgm vgz flac wav"}, TVAL_PTR).ptrval);
+	char *ext_filter = strdup(tern_find_path_default(config, "ui\0extensions\0", (tern_val){.ptrval = "bin gen md smd sms gg zip gz cue iso vgm vgz flac wav chd"}, TVAL_PTR).ptrval);
 	uint32_t num_exts = 0, ext_storage = 5;
 	char **ext_list = malloc(sizeof(char *) * ext_storage);
 	char *cur_filter = ext_filter;
