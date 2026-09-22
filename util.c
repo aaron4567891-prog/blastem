@@ -1072,6 +1072,32 @@ uint8_t delete_file(char *path)
 #if defined(__ANDROID__) && !defined(IS_LIB)
 
 #include <SDL.h>
+// Returns an owned path, an empty string for cancellation, or NULL while pending.
+char *pick_android_bios(void)
+{
+    JNIEnv *env = SDL_AndroidGetJNIEnv();
+    jobject activity = SDL_AndroidGetActivity();
+    if (!activity) return strdup("");
+    jclass cls = (*env)->GetObjectClass(env, activity);
+    jmethodID method = cls ? (*env)->GetMethodID(env, cls, "pickBiosFile", "()Ljava/lang/String;") : NULL;
+    jstring result = method ? (*env)->CallObjectMethod(env, activity, method) : NULL;
+    char *path = NULL;
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        path = strdup("");
+    } else if (result) {
+        const char *value = (*env)->GetStringUTFChars(env, result, NULL);
+        if (value) {
+            path = strdup(value);
+            (*env)->ReleaseStringUTFChars(env, result, value);
+        }
+        (*env)->DeleteLocalRef(env, result);
+    }
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+    (*env)->DeleteLocalRef(env, activity);
+    return path;
+}
+
 int open_uri(const char *path, const char *mode)
 {
 	static const char activity_class_name[] = "com/retrodev/blastem/BlastEmActivity";

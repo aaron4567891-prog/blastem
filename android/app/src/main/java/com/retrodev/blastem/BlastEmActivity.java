@@ -22,6 +22,70 @@ import java.util.HashMap;
 public class BlastEmActivity extends SDLActivity
 {
 	static final int DOC_TREE_CODE = 4242;
+    static final int BIOS_FILE_CODE = 4243;
+    private boolean biosPickerPending;
+    private volatile String biosPickerResult;
+
+    // Called by the emulator thread: null means pending, empty means cancelled.
+    public String pickBiosFile() {
+        if (biosPickerPending) {
+            String result = biosPickerResult;
+            if (result != null) biosPickerPending = false;
+            return result;
+        }
+        biosPickerPending = true;
+        biosPickerResult = null;
+        runOnUiThread(() -> {
+            try {
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("*/*");
+                startActivityForResult(intent, BIOS_FILE_CODE);
+            } catch (RuntimeException error) {
+                biosPickerResult = "";
+                android.widget.Toast.makeText(this, "Could not open BIOS picker", android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
+        return null;
+    }
+
+    private void importBiosFile(Uri uri) {
+        new Thread(() -> {
+            File destination = null;
+            try {
+                String name = "bios.bin";
+                try (Cursor cursor = getContentResolver().query(uri,
+                        new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                    if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) name = cursor.getString(0);
+                }
+                name = name.replaceAll("[^A-Za-z0-9._-]", "_");
+                if (name.isEmpty() || name.equals(".") || name.equals("..")) name = "bios.bin";
+                if (name.length() > 120) name = name.substring(name.length() - 120);
+                File directory = new File(getFilesDir(), "bios");
+                if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Cannot create BIOS folder");
+                destination = new File(directory, java.util.UUID.randomUUID() + "-" + name);
+                try (java.io.InputStream input = getContentResolver().openInputStream(uri);
+                     java.io.OutputStream output = new java.io.FileOutputStream(destination)) {
+                    if (input == null) throw new IOException("Cannot read selected BIOS");
+                    byte[] buffer = new byte[8192];
+                    int count, total = 0;
+                    while ((count = input.read(buffer)) != -1) {
+                        total += count;
+                        if (total > 4 * 1024 * 1024) throw new IOException("BIOS file exceeds 4 MB");
+                        output.write(buffer, 0, count);
+                    }
+                    if (total == 0) throw new IOException("BIOS file is empty");
+                }
+                biosPickerResult = destination.getAbsolutePath();
+            } catch (Exception error) {
+                if (destination != null) destination.delete();
+                Log.e("BlastEm", "BIOS import failed", error);
+                biosPickerResult = "";
+                runOnUiThread(() -> android.widget.Toast.makeText(this,
+                        "Could not import BIOS: " + error.getMessage(), android.widget.Toast.LENGTH_LONG).show());
+            }
+        }, "BlastEm-BIOS-import").start();
+    }
 	boolean chooseDirInProgress = false;
 	String chooseDirResult = null;
 	Map<String, Uri> uriMap = new HashMap<String, Uri>();
@@ -140,7 +204,13 @@ public class BlastEmActivity extends SDLActivity
 	
 	@Override
 	public void onActivityResult(int requestCode, int resultCode, Intent resultData) {
-		if (requestCode == DOC_TREE_CODE) {
+		if (requestCode == BIOS_FILE_CODE) {
+            if (resultCode == RESULT_OK && resultData != null && resultData.getData() != null) {
+                importBiosFile(resultData.getData());
+            } else {
+                biosPickerResult = "";
+            }
+        } else if (requestCode == DOC_TREE_CODE) {
 			if (resultCode == RESULT_OK && resultData != null) {
 				Uri uri = resultData.getData();
 				getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);

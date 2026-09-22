@@ -1960,8 +1960,27 @@ void settings_string(struct nk_context *context, char *label, char *path, char *
 	free(buffer);
 }
 
+#ifdef __ANDROID__
+static char *pending_bios_setting;
+#endif
+
 void settings_path(struct nk_context *context, char *label, char *path, char *def, const char **exts, uint32_t num_exts)
 {
+#ifdef __ANDROID__
+    if (pending_bios_setting == path) {
+        char *selected = pick_android_bios();
+        if (selected) {
+            if (*selected) {
+                config = tern_insert_path(config, path, (tern_val){.ptrval = selected}, TVAL_PTR);
+                config_dirty = 1;
+                persist_config(config);
+            } else {
+                free(selected);
+            }
+            pending_bios_setting = NULL;
+        }
+    }
+#endif
 	nk_label(context, label, NK_TEXT_LEFT);
 	char *curstr = tern_find_path_default(config, path, (tern_val){.ptrval = def}, TVAL_PTR).ptrval;
 	uint32_t len = strlen(curstr);
@@ -1978,6 +1997,9 @@ void settings_path(struct nk_context *context, char *label, char *path, char *de
 
 	nk_spacing(context, 1);
 	if (nk_button_label(context, "Browse")) {
+#ifdef __ANDROID__
+        if (!pending_bios_setting) pending_bios_setting = path;
+#else
 		browser_label = label;
 		browser_setting_path = path;
 		browser_ext_list = exts;
@@ -1986,6 +2008,7 @@ void settings_path(struct nk_context *context, char *label, char *path, char *de
 			browser_cur_path = path_dirname(buffer);
 		}
 		push_view(view_file_settings);
+#endif
 	}
 	free(buffer);
 }

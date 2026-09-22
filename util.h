@@ -111,6 +111,7 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
 #if defined(__ANDROID__) && !defined(IS_LIB)
 #include <jni.h>
 dir_entry *jdir_list_helper(JNIEnv *env, jmethodID meth, char *path, size_t *numret);
+char *pick_android_bios(void);
 int open_uri(const char *path, const char *mode);
 FILE* fopen_wrapper(const char *path, const char *mode);
 #endif
