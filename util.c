@@ -1072,7 +1072,7 @@ uint8_t delete_file(char *path)
 #if defined(__ANDROID__) && !defined(IS_LIB)
 
 #include <SDL.h>
-static int open_uri(const char *path, const char *mode)
+int open_uri(const char *path, const char *mode)
 {
 	static const char activity_class_name[] = "com/retrodev/blastem/BlastEmActivity";
 	static const char open_uri_as_fd_name[] = "openUriAsFd";
