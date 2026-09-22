@@ -440,11 +440,19 @@ static void write_cram(vdp_context * context, uint16_t address, uint16_t value)
 	}
 	write_cram_internal(context, addr, value);
 
+#ifdef __ANDROID__
+	// Keep palette updates, but hide CRAM write dots in the vertical border.
+	// Active-picture palette effects are still rendered normally.
+	if (context->vcounter >= context->inactive_start) {
+		return;
+	}
+#endif
+
 	if (context->output && context->hslot >= BG_START_SLOT && (
 		context->vcounter < context->inactive_start + context->border_bot
 		|| context->vcounter > 0x200 - context->border_top
 	)) {
-		uint8_t bg_end_slot = BG_START_SLOT + (context->regs[REG_MODE_4] & BIT_H40) ? LINEBUF_SIZE/2 : (256+HORIZ_BORDER)/2;
+		uint8_t bg_end_slot = BG_START_SLOT + ((context->regs[REG_MODE_4] & BIT_H40) ? LINEBUF_SIZE/2 : (256+HORIZ_BORDER)/2);
 		if (context->hslot < bg_end_slot) {
 			pixel_t color = (context->regs[REG_MODE_2] & BIT_MODE_5) ? context->colors[addr] : context->colors[addr + MODE4_OFFSET];
 			context->output[(context->hslot - BG_START_SLOT)*2 + 1] = color;
