@@ -6,9 +6,9 @@ LOCAL_MODULE := main
 
 SDL_PATH := android/app/jni/SDL
 
-LOCAL_C_INCLUDES := $(LOCAL_PATH)/$(SDL_PATH)/include
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/$(SDL_PATH)/include $(LOCAL_PATH)/libchdr/include $(LOCAL_PATH)/libchdr $(LOCAL_PATH)/lzma $(LOCAL_PATH)/zlib
 
-LOCAL_CFLAGS += -std=gnu99 -DNEW_CORE -DUSE_GLES
+LOCAL_CFLAGS += -std=gnu99 -DNEW_CORE -DNEW_Z80 -DUSE_GLES -DHAVE_UNISTD_H
 
 # Add your application source files here...
 LOCAL_SRC_FILES := $(SDL_PATH)/src/main/android/SDL_android_main.c 68kinst.c \
@@ -27,8 +27,14 @@ LOCAL_SRC_FILES := $(SDL_PATH)/src/main/android/SDL_android_main.c 68kinst.c \
 	cdd_fader.c rf5c164.c sft_mapper.c mediaplayer.c oscilloscope.c disasm.c \
 	i8255.c gen_player.c 
 
+LOCAL_SRC_FILES += chdimage.c libchdr/libchdr_bitstream.c libchdr/libchdr_cdrom.c \
+    libchdr/libchdr_chd.c libchdr/libchdr_flac.c libchdr/libchdr_huffman.c \
+    libchdr/zstd_stub.c lzma/LzmaDec.c nuklear_ui/debug_ui.c korean_sms_multi.c \
+    laseractive.c upd78k2_dis.c upd78k2.c osd_font.c pd0178.c radica.c \
+    32x.c 32x_video.c sh2.c sh2_decode.c sh7095.c
+
 LOCAL_SHARED_LIBRARIES := SDL2
 
-LOCAL_LDLIBS := -lGLESv1_CM -lGLESv2 -llog
+LOCAL_LDLIBS := -lGLESv1_CM -lGLESv2 -llog -lm
 
 include $(BUILD_SHARED_LIBRARY)

@@ -12,19 +12,24 @@ android {
         namespace "com.retrodev.blastem"
     }
     compileSdkVersion 35
+    ndkVersion "27.0.12077973"
+    sourceSets.main {
+        java.setSrcDirs(["src/main/java/com", "jni/SDL/android-project/app/src/main/java"])
+        assets.setSrcDirs(["build/generated/blastemAssets"])
+    }
     defaultConfig {
-        minSdkVersion 19
+        minSdkVersion 21
         targetSdkVersion 35
         versionCode 1
         versionName "1.0"
         externalNativeBuild {
             ndkBuild {
-                arguments "APP_PLATFORM=android-19"
-                abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+                arguments "APP_PLATFORM=android-21"
+                abiFilters 'arm64-v8a'
             }
             // cmake {
-            //     arguments "-DANDROID_APP_PLATFORM=android-19", "-DANDROID_STL=c++_static"
-            //     // abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            //     arguments "-DANDROID_APP_PLATFORM=android-21", "-DANDROID_STL=c++_static"
+            //     // abiFilters 'arm64-v8a'
             //     abiFilters 'arm64-v8a'
             // }
         }
@@ -73,3 +78,15 @@ android {
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
 }
+
+// Run once after cloning/pulling, before Gradle configures native sources.
+tasks.register('checkAndroidSetup') {
+    doLast {
+        if (!file('jni/SDL/include/SDL.h').exists() ||
+            !file('../../m68k.c').exists() ||
+            !file('build/generated/blastemAssets/default.cfg').exists()) {
+            throw new GradleException('Run python android/setup.py from the repository root first.')
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn('checkAndroidSetup') }
