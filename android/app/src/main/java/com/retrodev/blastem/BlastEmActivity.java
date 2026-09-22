@@ -89,8 +89,72 @@ public class BlastEmActivity extends SDLActivity
 	boolean chooseDirInProgress = false;
 	String chooseDirResult = null;
 	Map<String, Uri> uriMap = new HashMap<String, Uri>();
+    // Keep display names in native paths so extension detection and CUE siblings work.
+    private String libraryTree;
+
+    @Override protected String[] getArguments() {
+        String rom = getIntent().getStringExtra("library_rom");
+        if (libraryTree == null || rom == null) return new String[0];
+        String path = libraryTree + "/" + rom;
+        String machine = getIntent().getStringExtra("library_machine");
+        return machine == null ? new String[]{path} : new String[]{"-m", machine, path};
+    }
+
+    @Override protected void onDestroy() {
+        boolean finished = isFinishing();
+        super.onDestroy();
+        // Native emulator globals must start fresh for the next game.
+        // The launcher runs in the main process and stays alive.
+        if (finished) android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    private Uri resolveUri(String path) {
+        Uri cached = uriMap.get(path);
+        if (cached != null) return cached;
+        if (libraryTree == null || !path.startsWith(libraryTree + "/")) return null;
+        Uri tree = Uri.parse(libraryTree);
+        String id = DocumentsContract.getTreeDocumentId(tree);
+        Uri current = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+        StringBuilder key = new StringBuilder(libraryTree);
+        try {
+            java.util.ArrayDeque<String> parts = new java.util.ArrayDeque<>();
+            for (String part : path.substring(libraryTree.length() + 1).replace('\\', '/').split("/")) {
+                if (part.isEmpty() || part.equals(".")) continue;
+                if (part.equals("..")) {
+                    if (parts.isEmpty()) return null;
+                    parts.removeLast();
+                } else parts.addLast(part);
+            }
+            for (String name : parts) {
+                boolean found = false;
+                try (Cursor c = getContentResolver().query(
+                        DocumentsContract.buildChildDocumentsUriUsingTree(tree, id),
+                        new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                    if (c == null) return null;
+                    while (c.moveToNext()) if (name.equals(c.getString(1))) {
+                        id = c.getString(0);
+                        current = DocumentsContract.buildDocumentUriUsingTree(tree, id);
+                        key.append("/").append(name); uriMap.put(key.toString(), current);
+                        found = true; break;
+                    }
+                }
+                if (!found) return null;
+            }
+            return current;
+        } catch (RuntimeException error) {
+            Log.w("BlastEm", "Library document unavailable", error); return null;
+        }
+    }
+
 	@Override
     protected void onCreate(Bundle savedInstanceState) {
+        libraryTree = getIntent().getStringExtra("library_tree");
+        if (libraryTree != null) {
+            Uri tree = Uri.parse(libraryTree);
+            uriMap.put(libraryTree, DocumentsContract.buildDocumentUriUsingTree(tree,
+                    DocumentsContract.getTreeDocumentId(tree)));
+        }
 		super.onCreate(savedInstanceState);
 		
 		//set immersive mode on devices that support it
@@ -103,6 +167,7 @@ public class BlastEmActivity extends SDLActivity
 	}
 	
 	public String getRomPath() {
+        if (libraryTree != null) return libraryTree;
 		if (chooseDirInProgress) {
 			if (chooseDirResult != null) {
 				chooseDirInProgress = false;
@@ -125,7 +190,7 @@ public class BlastEmActivity extends SDLActivity
 	}
 	
 	public String[] readUriDir(String uriString) {
-		Uri uri = uriMap.get(uriString);
+		Uri uri = resolveUri(uriString);
 		if (uri == null) {
 			return new String[0];
 		}
@@ -137,7 +202,7 @@ public class BlastEmActivity extends SDLActivity
         try {
 			Log.i("BlastEm", "getTreeDocumentId: " + DocumentsContract.getTreeDocumentId(uri));
 			final Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri,
-                DocumentsContract.getTreeDocumentId(uri)
+                DocumentsContract.isDocumentUri(this, uri) ? DocumentsContract.getDocumentId(uri) : DocumentsContract.getTreeDocumentId(uri)
 			);
             c = resolver.query(
 				childrenUri, new String[] {
@@ -169,7 +234,7 @@ public class BlastEmActivity extends SDLActivity
 	}
 	
 	public int openUriAsFd(String uriString, String mode) {
-		Uri uri = uriMap.get(uriString);
+		Uri uri = resolveUri(uriString);
 		if (uri == null) {
 			Log.w("BlastEm", "Did not find URI in map: " + uriString);
 			return 0;
