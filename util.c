@@ -7,25 +7,27 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include "util.h"
 
 #if defined(__ANDROID__) && !defined(IS_LIB)
 #include <android/log.h>
 #include <SDL_system.h>
 #include <jni.h>
 
-android_LogPriority log_level_to_android(log_level)
+static android_LogPriority log_level_to_android(log_level level)
 {
-	switch (log_level)
+	switch (level)
 	{
 	case DEBUG: return ANDROID_LOG_DEBUG;
-	case INFO: ANDROID_LOG_INFO;
-	case WARN: ANDROID_LOG_WARN;
-	case FATAL: ANDROID_LOG_FATAL;
+	case INFO: return ANDROID_LOG_INFO;
+	case WARN: return ANDROID_LOG_WARN;
+	case FATAL: return ANDROID_LOG_FATAL;
 	}
+	return ANDROID_LOG_INFO;
 }
 
 #define log_puts(stream, msg, level) __android_log_write(log_level_to_android(level), "BlastEm", msg)
-#define log_printf(sream, format, level, args) __android_log_vprint(log_level_to_android(level), "BlastEm", msg, args)
+#define log_printf(stream, format, level, args) __android_log_vprint(log_level_to_android(level), "BlastEm", format, args)
 
 #else
 
@@ -34,7 +36,6 @@ android_LogPriority log_level_to_android(log_level)
 
 #endif
 
-#include "util.h"
 
 void *aligned_calloc(size_t nmemb, size_t size, size_t align)
 {
@@ -463,12 +464,12 @@ void log_msg(char *format, log_level level, va_list args)
 			vsnprintf(buf, actual, format, args);
 		}
 		if (output_enabled || level >= WARN) {
-			log_puts(stream, buf, log_level);
+			log_puts(stream, buf, level);
 		}
 		log_handler(level, buf);
 		free(buf);
 	} else if (output_enabled || level >= WARN) {
-		log_printf(stream, format, log_level, args);
+		log_printf(stream, format, level, args);
 	}
 }
 void fatal_error(char *format, ...)
