@@ -109,6 +109,8 @@ uint8_t delete_file(char *path);
 //works like fgets, but calls timeout_cb every timeout_usec microseconds while waiting for input
 char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void (*timeout_cb)(void));
 #if defined(__ANDROID__) && !defined(IS_LIB)
+#include <jni.h>
+dir_entry *jdir_list_helper(JNIEnv *env, jmethodID meth, char *path, size_t *numret);
 int open_uri(const char *path, const char *mode);
 FILE* fopen_wrapper(const char *path, const char *mode);
 #endif

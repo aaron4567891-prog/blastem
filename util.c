@@ -903,7 +903,7 @@ char *fgets_timeout(char *dst, size_t size, FILE *f, uint64_t timeout_usec, void
 #include <dirent.h>
 
 #if defined(__ANDROID__) && !defined(IS_LIB)
-static dir_entry *jdir_list_helper(JNIEnv *env, jmethodID meth, char *path, size_t *numret)
+dir_entry *jdir_list_helper(JNIEnv *env, jmethodID meth, char *path, size_t *numret)
 {
 	jstring jpath = (*env)->NewStringUTF(env, path);
 	jobject activity = SDL_AndroidGetActivity();
