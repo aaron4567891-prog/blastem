@@ -270,8 +270,14 @@ static uint16_t unmapped_word_read16(uint32_t address, void *vcontext)
 	m68k_context *m68k = vcontext;
 	genesis_context *gen = m68k->system;
 	segacd_context *cd = gen->expansion;
+	// The Sub CPU can finish a bank handoff after the last gate-array poll.
+	// Run it up to this access before choosing which Word RAM bank to read.
+	scd_run(cd, gen_cycle_to_scd(m68k->cycles, gen));
 	if (cd->gate_array[GA_MEM_MODE] & BIT_MEM_MODE) {
 		return cd->word_ram[address + cd->bank_toggle];
+	} else if (cd->main_has_word2m) {
+		// Synchronization may have switched back to directly mapped 2M RAM.
+		return cd->word_ram[address >> 1];
 	} else {
 		return 0xFFFF;
 	}
@@ -279,18 +285,8 @@ static uint16_t unmapped_word_read16(uint32_t address, void *vcontext)
 
 static uint8_t unmapped_word_read8(uint32_t address, void *vcontext)
 {
-	m68k_context *m68k = vcontext;
-	genesis_context *gen = m68k->system;
-	segacd_context *cd = gen->expansion;
-	if (cd->gate_array[GA_MEM_MODE] & BIT_MEM_MODE) {
-		if (address & 1) {
-			return cd->word_ram[(address & ~1) + cd->bank_toggle];
-		} else {
-			return cd->word_ram[address + cd->bank_toggle] >> 8;
-		}
-	} else {
-		return 0xFF;
-	}
+	uint16_t word = unmapped_word_read16(address & ~1, vcontext);
+	return address & 1 ? word : word >> 8;
 }
 
 static void *unmapped_word_write16(uint32_t address, void *vcontext, uint16_t value)
@@ -354,13 +350,15 @@ static uint32_t cell_image_translate_address(uint32_t address)
 
 static uint16_t cell_image_read16(uint32_t address, void *vcontext)
 {
-	address = cell_image_translate_address(address);
 	m68k_context *m68k = vcontext;
 	genesis_context *gen = m68k->system;
 	segacd_context *cd = gen->expansion;
+	scd_run(cd, gen_cycle_to_scd(m68k->cycles, gen));
 	if (!(cd->gate_array[GA_MEM_MODE] & BIT_MEM_MODE)) {
-		return 0xFFFF;
+		// In 2M mode this window is the upper half of linear Word RAM.
+		return cd->main_has_word2m ? cd->word_ram[0x10000 + (address >> 1)] : 0xFFFF;
 	}
+	address = cell_image_translate_address(address);
 	return cd->word_ram[address + cd->bank_toggle];
 }
 
@@ -603,12 +601,6 @@ static void calculate_target_cycle(m68k_context * context)
 		if (mask < 5) {
 			if (cd->gate_array[GA_INT_MASK] & BIT_MASK_IEN5) {
 				cdc_cycle = lc8951_next_interrupt(&cd->cdc);
-#ifdef NEW_CORE
-				//should this maybe happen with the old core too?
-				if (cdc_cycle == cd->cdc.cycle) {
-					cdc_cycle = context->cycles;
-				}
-#endif
 				//CDC interrupts only generated on falling edge of !INT signal
 				if (cd->cdc_int_ack) {
 					if (cdc_cycle > cd->cdc.cycle) {
@@ -617,6 +609,14 @@ static void calculate_target_cycle(m68k_context * context)
 						cdc_cycle = CYCLE_NEVER;
 					}
 				}
+#ifdef NEW_CORE
+				// Check acknowledgement against the CDC clock before converting an
+				// asserted interrupt to the CPU clock. Otherwise a CPU running ahead
+				// of the CDC makes the same acknowledged edge look like a new one.
+				if (cdc_cycle == cd->cdc.cycle) {
+					cdc_cycle = context->cycles;
+				}
+#endif
 				if (cdc_cycle < context->int_cycle) {
 					context->int_cycle = cdc_cycle;
 					context->int_num = 5;
@@ -949,6 +949,14 @@ static void *sub_gate_write16(uint32_t address, void *vcontext, uint16_t value)
 		calculate_target_cycle(m68k);
 		break;
 	case GA_INT_MASK:
+		// Finish graphics work using the old mask before changing it. A completed
+		// level-1 interrupt is discarded while disabled, not deferred until a
+		// later program installs its interrupt handlers (Batman Returns).
+		cd_graphics_run(cd, m68k->cycles);
+		if (!(cd->gate_array[GA_STAMP_SIZE] & BIT_GRON)
+			&& (!(cd->gate_array[reg] & BIT_MASK_IEN1) || !(value & BIT_MASK_IEN1))) {
+			cd->graphics_int_cycle = CYCLE_NEVER;
+		}
 		if (!(cd->gate_array[reg] & BIT_MASK_IEN6)) {
 			//subcode interrupts can't be made pending when they are disabled in this reg
 			cd->cdd.subcode_int_pending = 0;
