@@ -319,7 +319,7 @@ static void update_pad_menu_binding(char *key, tern_val val, uint8_t valtype, vo
 	*pads = tern_insert_node(*pads, key, val.ptrval);
 }
 
-#define CONFIG_VERSION 14
+#define CONFIG_VERSION 15
 static tern_node *migrate_config(tern_node *config, int from_version)
 {
 	tern_node *def_config = parse_bundled_config("default.cfg");
@@ -600,6 +600,19 @@ static tern_node *migrate_config(tern_node *config, int from_version)
 		}
 		free(exts);
 	}
+	case 14: {
+		// Older CDDA controls saved cdd_gain, which the mixer never read.
+		// Preserve an explicit value from the corrected control if both exist.
+		char *legacy_gain = tern_find_path(config, "audio\0cdd_gain\0", TVAL_PTR).ptrval;
+		char *cdda_gain = tern_find_path(config, "audio\0cdda_gain\0", TVAL_PTR).ptrval;
+		if (legacy_gain && !cdda_gain) {
+			config = tern_insert_path(config, "audio\0cdda_gain\0", (tern_val){.ptrval = strdup(legacy_gain)}, TVAL_PTR);
+		}
+		tern_val removed;
+		if (tern_delete_path(&config, "audio\0cdd_gain\0", &removed) == TVAL_PTR) {
+			free(removed.ptrval);
+		}
+	}
 	}
 	char buffer[16];
 	sprintf(buffer, "%d", CONFIG_VERSION);
@@ -620,7 +633,7 @@ tern_node *load_config()
 	}
 	int config_version = atoi(tern_find_ptr_default(ret, "version", "0"));
 	if (config_version < CONFIG_VERSION) {
-		migrate_config(ret, config_version);
+		ret = migrate_config(ret, config_version);
 	}
 	return ret;
 }
