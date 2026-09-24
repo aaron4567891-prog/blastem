@@ -1,5 +1,6 @@
 package com.retrodev.blastem;
 import org.libsdl.app.SDLActivity;
+import android.app.AlertDialog;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.database.Cursor;
@@ -10,6 +11,7 @@ import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -25,6 +27,89 @@ public class BlastEmActivity extends SDLActivity
     static final int BIOS_FILE_CODE = 4243;
     private boolean biosPickerPending;
     private volatile String biosPickerResult;
+    private AlertDialog gameMenu;
+    private boolean leavingGame;
+    private MenuShortcut menuShortcut;
+    private KeyEvent modifierDown;
+
+    // Commands are queued to SDL and executed on the emulator thread.
+    private static native boolean nativeMenuAction(int action);
+    private static final int RELEASE_INPUT = 0, SAVE_STATE = 1, LOAD_STATE = 2;
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (menuShortcut != null && !SDLActivity.mBrokenLibraries
+                && (event.getAction() == KeyEvent.ACTION_DOWN || event.getAction() == KeyEvent.ACTION_UP)) {
+            boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+            if (event.getKeyCode() == menuShortcut.modifier && down && event.getRepeatCount() == 0)
+                modifierDown = new KeyEvent(event);
+            int action = menuShortcut.key(event.getKeyCode(), down, event.getRepeatCount(), event.isCanceled());
+            if (action == MenuShortcut.OPEN_MENU) {
+                menuShortcut.reset(); modifierDown = null;
+                showGameMenu();
+                return true;
+            }
+            if (action == MenuShortcut.CONSUME) return true;
+            if (action == MenuShortcut.FORWARD_MODIFIER_TAP && modifierDown != null) {
+                super.dispatchKeyEvent(modifierDown); modifierDown = null;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void showGameMenu() {
+        if (gameMenu != null || leavingGame || isFinishing()) return;
+        nativeMenuAction(RELEASE_INPUT);
+        // On modern Android, a dialog alone does not pause SDL's native thread.
+        pauseNativeThread();
+        AlertDialog dialog = new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle("Game menu")
+                .setItems(new String[]{"Resume", "Save state (quick slot)",
+                        "Load state (quick slot)", "Return to library"}, (d, which) -> {
+                    if (which == 3) returnToLibrary();
+                    else if (which > 0 && !nativeMenuAction(which == 1 ? SAVE_STATE : LOAD_STATE))
+                        android.widget.Toast.makeText(this, "Game is not ready. Please try again.", android.widget.Toast.LENGTH_SHORT).show();
+                }).create();
+        gameMenu = dialog;
+        dialog.setOnKeyListener((d, key, event) -> {
+            // Start does not act on either the dialog or game while the popup is open.
+            if (key == KeyEvent.KEYCODE_BUTTON_START) return true;
+            if (key != KeyEvent.KEYCODE_BUTTON_B) return false;
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled()) d.dismiss();
+            return true;
+        });
+        dialog.setOnDismissListener(d -> {
+            gameMenu = null;
+            if (!leavingGame && !isFinishing()) {
+                resumeNativeThread();
+                mSurface.requestFocus();
+            }
+        });
+        dialog.show();
+    }
+
+    private void returnToLibrary() {
+        if (leavingGame || isFinishing()) return;
+        leavingGame = true;
+        if (gameMenu != null) gameMenu.dismiss();
+        Intent home = new Intent(this, HomeActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra("show_library", true);
+        startActivity(home);
+        // SDL's normal shutdown sends Quit and lets the core persist battery saves.
+        finish();
+    }
+
+    @Override public void onBackPressed() { returnToLibrary(); }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (gameMenu != null) pauseNativeThread();
+    }
+
+    @Override protected void onStop() {
+        if (menuShortcut != null) menuShortcut.reset();
+        modifierDown = null;
+        super.onStop();
+    }
 
     // Called by the emulator thread: null means pending, empty means cancelled.
     public String pickBiosFile() {
@@ -101,6 +186,8 @@ public class BlastEmActivity extends SDLActivity
     }
 
     @Override protected void onDestroy() {
+        leavingGame = true;
+        if (gameMenu != null) gameMenu.dismiss();
         boolean finished = isFinishing();
         super.onDestroy();
         // Native emulator globals must start fresh for the next game.
@@ -149,6 +236,7 @@ public class BlastEmActivity extends SDLActivity
 
 	@Override
     protected void onCreate(Bundle savedInstanceState) {
+        menuShortcut = MenuHotkeys.load(this);
         libraryTree = getIntent().getStringExtra("library_tree");
         if (libraryTree != null) {
             Uri tree = Uri.parse(libraryTree);
@@ -156,6 +244,11 @@ public class BlastEmActivity extends SDLActivity
                     DocumentsContract.getTreeDocumentId(tree)));
         }
 		super.onCreate(savedInstanceState);
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::returnToLibrary);
+        }
 		
 		//set immersive mode on devices that support it
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {

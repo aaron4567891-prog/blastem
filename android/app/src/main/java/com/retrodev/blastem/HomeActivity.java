@@ -8,8 +8,10 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
@@ -44,6 +46,13 @@ public class HomeActivity extends Activity {
     private GridView list;
     private CoverCache covers;
     private LinearLayout tabs;
+    private LinearLayout library;
+    private HorizontalScrollView systemStrip;
+    private FrameLayout content;
+    private Button settingsButton;
+    private HomeSettings settings;
+    private Bundle restoredState;
+    private boolean settingsOpen;
     private final ArrayList<Game> games = new ArrayList<>();
     private ArrayAdapter<Game> adapter;
     private static class Game {
@@ -56,27 +65,35 @@ public class HomeActivity extends Activity {
         covers = new CoverCache(this);
         prefs = getSharedPreferences("system_library", MODE_PRIVATE);
         selected = Math.max(0, Math.min(SYSTEMS.length - 1, prefs.getInt("selected", 0)));
+        restoredState = state;
         if (state != null) picking = state.getString("picking");
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(16), dp(12), dp(16), dp(12));
         root.setBackgroundColor(Color.rgb(20, 23, 31));
-        TextView title = label("BlastEm", 26); root.addView(title);
-        HorizontalScrollView strip = new HorizontalScrollView(this);
-        tabs = new LinearLayout(this); strip.addView(tabs); root.addView(strip);
+        LinearLayout header = new LinearLayout(this);
+        TextView title = label("BlastEm", 26);
+        header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        settingsButton = button("Settings", () -> showSettings(!settingsOpen));
+        header.addView(settingsButton); root.addView(header);
+        systemStrip = new HorizontalScrollView(this);
+        systemStrip.setHorizontalScrollBarEnabled(false);
+        tabs = new LinearLayout(this); systemStrip.addView(tabs); root.addView(systemStrip);
         for (int i = 0; i < SYSTEMS.length; i++) {
             final int index = i;
             Button tab = button(SYSTEMS[i][1], () -> select(index));
             tabs.addView(tab);
         }
-        heading = label("", 22); root.addView(heading);
+        content = new FrameLayout(this); root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
+        library = new LinearLayout(this); library.setOrientation(LinearLayout.VERTICAL);
+        content.addView(library, new FrameLayout.LayoutParams(-1, -1));
+        heading = label("", 22); library.addView(heading);
         HorizontalScrollView actionsScroll = new HorizontalScrollView(this);
         LinearLayout actions = new LinearLayout(this); actionsScroll.addView(actions);
         folder = button("Add ROM Folder", this::chooseFolder); actions.addView(folder);
         actions.addView(button("Refresh", () -> { covers.retryMissing(); scan(selected); }));
-        actions.addView(button("Emulator Menu", () -> startActivity(new Intent(this, BlastEmActivity.class))));
-        root.addView(actionsScroll);
-        status = label("", 14); root.addView(status);
+        library.addView(actionsScroll);
+        status = label("", 14); library.addView(status);
         list = new GridView(this);
         list.setNumColumns(GridView.AUTO_FIT); list.setColumnWidth(dp(160));
         list.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
@@ -107,12 +124,17 @@ public class HomeActivity extends Activity {
         };
         list.setAdapter(adapter);
         list.setOnItemClickListener((parent, view, position, id) -> launch(games.get(position)));
-        root.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
-        root.addView(label("Box art: Libretro thumbnails Â· Downloaded covers are saved on this device", 12));
+        library.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
+        library.addView(label("Start: Settings  ·  L1 / R1: switch systems  ·  Box art is cached on this device", 12));
         setContentView(root); select(selected);
+        if (state != null && state.getBoolean("settings_open")) showSettings(true);
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::onBackPressed);
+        }
     }
-    private int dp(int n) { return (int)(n * getResources().getDisplayMetrics().density + .5f); }
-    private TextView label(String text, int size) {
+    int dp(int n) { return (int)(n * getResources().getDisplayMetrics().density + .5f); }
+    TextView label(String text, int size) {
         TextView v = new TextView(this); v.setText(text); v.setTextSize(size);
         v.setTextColor(Color.WHITE); v.setPadding(0, dp(6), 0, dp(6)); return v;
     }
@@ -126,7 +148,7 @@ public class HomeActivity extends Activity {
             d.addState(new int[]{s}, box(0xff234e80, 0xff70b7ff));
         d.addState(new int[]{}, box(Color.TRANSPARENT, Color.TRANSPARENT)); return d;
     }
-    private Button button(String name, Runnable click) {
+    Button button(String name, Runnable click) {
         Button b = new Button(this); b.setText(name); b.setTextColor(Color.WHITE);
         b.setAllCaps(false); b.setBackground(highlight()); b.setOnClickListener(v -> click.run()); return b;
     }
@@ -134,6 +156,12 @@ public class HomeActivity extends Activity {
         selected = index; generation++;
         prefs.edit().putInt("selected", index).apply();
         for (int i = 0; i < tabs.getChildCount(); i++) tabs.getChildAt(i).setSelected(i == index);
+        systemStrip.post(() -> {
+            View tab = tabs.getChildAt(selected);
+            int left = tab.getLeft(), right = tab.getRight(), scroll = systemStrip.getScrollX();
+            if (left < scroll) systemStrip.smoothScrollTo(left, 0);
+            else if (right > scroll + systemStrip.getWidth()) systemStrip.smoothScrollTo(right - systemStrip.getWidth(), 0);
+        });
         heading.setText(SYSTEMS[index][1]);
         boolean hasFolder = prefs.contains("folder_" + SYSTEMS[index][0]);
         folder.setText(hasFolder ? "Change ROM Folder" : "Add ROM Folder");
@@ -146,9 +174,55 @@ public class HomeActivity extends Activity {
             }
         } catch (JSONException ignored) { }
         adapter.notifyDataSetChanged();
-        status.setText(hasFolder ? games.size() + " games Ã‚Â· Folder remembered Ã‚Â· Refresh to find new games"
+        list.clearChoices(); list.setSelection(0);
+        status.setText(hasFolder ? games.size() + " games · Folder remembered · Refresh to find new games"
                 : "Choose a ROM folder for this system. Subfolders are included.");
         if (hasFolder && !prefs.contains("games_" + SYSTEMS[index][0])) scan(index);
+    }
+    private void showSettings(boolean show) {
+        settingsOpen = show;
+        if (show && settings == null) {
+            settings = new HomeSettings(this, restoredState);
+            content.addView(settings, new FrameLayout.LayoutParams(-1, -1));
+        } else if (show) settings.refresh();
+        library.setVisibility(show ? View.GONE : View.VISIBLE);
+        systemStrip.setVisibility(show ? View.GONE : View.VISIBLE);
+        if (settings != null) settings.setVisibility(show ? View.VISIBLE : View.GONE);
+        settingsButton.setText(show ? "Back to library" : "Settings");
+        settingsButton.requestFocus();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        int key = event.getKeyCode();
+        if (key == KeyEvent.KEYCODE_BUTTON_START) {
+            if (event.getAction() == KeyEvent.ACTION_UP && !event.isCanceled() && !launching && !settingsOpen)
+                showSettings(true);
+            return true;
+        }
+        if (!settingsOpen && (key == KeyEvent.KEYCODE_BUTTON_L1 || key == KeyEvent.KEYCODE_BUTTON_R1)) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0 && !launching) {
+                select((selected + (key == KeyEvent.KEYCODE_BUTTON_R1 ? 1 : SYSTEMS.length - 1)) % SYSTEMS.length);
+                if (!games.isEmpty()) list.requestFocus();
+                else tabs.getChildAt(selected).requestFocus();
+            }
+            return true;
+        }
+        if (settingsOpen && key == KeyEvent.KEYCODE_BUTTON_B) {
+            if (event.getAction() == KeyEvent.ACTION_UP) showSettings(false);
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    @Override public void onBackPressed() {
+        if (settingsOpen) showSettings(false);
+        else super.onBackPressed();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent.getBooleanExtra("show_library", false)) showSettings(false);
     }
     private void chooseFolder() {
         picking = SYSTEMS[selected][0];
@@ -157,10 +231,17 @@ public class HomeActivity extends Activity {
         startActivityForResult(intent, PICK_FOLDER);
     }
     @Override protected void onSaveInstanceState(Bundle state) {
-        state.putString("picking", picking); super.onSaveInstanceState(state);
+        state.putString("picking", picking); state.putBoolean("settings_open", settingsOpen);
+        if (settings != null) settings.saveState(state);
+        super.onSaveInstanceState(state);
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == HomeSettings.PICK_BIOS) {
+            if (settings == null) showSettings(true);
+            settings.importBios(result == RESULT_OK && data != null ? data.getData() : null);
+            return;
+        }
         if (request != PICK_FOLDER || result != RESULT_OK || data == null || data.getData() == null || picking == null) return;
         try {
             Uri uri = data.getData();
@@ -174,7 +255,7 @@ public class HomeActivity extends Activity {
         String saved = prefs.getString("folder_" + SYSTEMS[index][0], null);
         if (saved == null) { chooseFolder(); return; }
         int token = ++generation;
-        status.setText("Scanning ROM folderÃ¢â‚¬Â¦");
+        status.setText("Scanning ROM folder…");
         worker.execute(() -> {
             try {
                 Uri tree = Uri.parse(saved);

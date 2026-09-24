@@ -18,6 +18,9 @@
 #include "png.h"
 #include "config.h"
 #include "controller_info.h"
+#ifdef __ANDROID__
+#include <jni.h>
+#endif
 
 #ifndef DISABLE_OPENGL
 #ifdef USE_GLES
@@ -1007,10 +1010,59 @@ static void gl_set_vsync(const char *vsync)
 }
 #endif
 
+#ifdef __ANDROID__
+// Only the UI thread enqueues commands; all core access stays on SDL's thread.
+#define ANDROID_MENU_EVENT SDL_USEREVENT
+#define ANDROID_MENU_MAGIC 0x42454D00
+
+JNIEXPORT jboolean JNICALL Java_com_retrodev_blastem_BlastEmActivity_nativeMenuAction(
+    JNIEnv *env, jclass cls, jint action)
+{
+	if (action < 0 || action > 2 || !(SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO)) {
+		return JNI_FALSE;
+	}
+	SDL_Event event;
+	SDL_zero(event);
+	event.type = ANDROID_MENU_EVENT;
+	event.user.code = ANDROID_MENU_MAGIC + action;
+	return SDL_PushEvent(&event) == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+static void android_menu_action(int action)
+{
+	if (!current_system || !get_content_binding_state()) return;
+	switch (action) {
+	case 0:
+		// A key released while the dialog owns focus must not stay held in-game.
+		if (current_system->gamepad_up) {
+			for (uint8_t pad = 1; pad <= 8; pad++) {
+				for (uint8_t button = DPAD_UP; button < NUM_GAMEPAD_BUTTONS; button++) {
+					current_system->gamepad_up(current_system, pad, button);
+				}
+			}
+		}
+		break;
+	case 1:
+		bind_up("ui.save_state");
+		break;
+	case 2:
+		bind_up("ui.load_state");
+		break;
+	}
+}
+#endif
+
 static int32_t handle_event(SDL_Event *event)
 {
 	SDL_Window *event_win = NULL;
 	switch (event->type) {
+#ifdef __ANDROID__
+	case ANDROID_MENU_EVENT:
+		if (event->user.code >= ANDROID_MENU_MAGIC && event->user.code <= ANDROID_MENU_MAGIC + 2) {
+			android_menu_action(event->user.code - ANDROID_MENU_MAGIC);
+		}
+		break;
+#endif
 	case SDL_KEYDOWN:
 		event_win = SDL_GetWindowFromID(event->key.windowID);
 		if (event_win == main_window || !has_event_handler(event_win)) {
